@@ -2,19 +2,28 @@ package com.example.nfc;
 
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.util.Log;
 
 import java.util.ArrayList;
 
-public class LPCD {
+public class Test {
+
+    private static final String TAG = "wj___ ";
     HandlerThread thread;
     Handler handler;
 
     final static int TIME_DISTANCE = 5000; // 5 秒
     final static int REPORT_COUNT = 10;
     final static int CHECK_DELAY_TIME = 10000;  // 10 秒
-    final ArrayList<LPCDInfo> list = new ArrayList<>();
+    final ArrayList<LPCDInfo> timeInlist = new ArrayList<>();
+    final ArrayList<LPCDInfo> timeOutlist = new ArrayList<>();
+    private LPCDInfo lastInfo;
+    private int report1_size ;
+    private int report2_size;
+    private int timeInlist_size;
+    private int timeOutlist_size;
 
-    public LPCD() {
+    public Test() {
         thread = new HandlerThread("lpcd_report");
         thread.start();
         handler = new Handler(thread.getLooper());
@@ -23,58 +32,90 @@ public class LPCD {
     private Runnable checkRunnable = new Runnable() {
         @Override
         public void run() {
-            checkReport1();
-            list.clear();
+            // 10秒一次的自动检查
+            checkReport1(true);
+            checkReport2(true);
         }
     };
 
-    LPCDInfo getLastInfo() {
-        if (list.isEmpty()) {
-            return null;
-        }
-        return list.get(list.size() - 1);
-    }
-
-    /**
-     * 1，相邻lpcd事件时间差在5秒内，发生超10次（记录次数）
-     * 2，出现相邻lpcd事件时间差5秒外，上报1，并且开始记录本次事件发生次数 （记录本次次数）
-     * 3，如果上一次连续次数超过十次后，后面再没有来LPCD事件，这种情况下之前统计的连续次数就不会触发2这种情况，
-     * 但是之前统计的次数需要上报，那就在每次收到LPCD事件后，起一个定时任务（10S），每次收到都去刷新，
-     * 当定时任务到了，判断一下有没有触发2的上报，如果触发了，那就不管了，如果没有触发2的上报，那就上报之前统计的次数；
-     */
     public void onLPCDEvent(String msg) {
         handler.removeCallbacks(checkRunnable);
         LPCDInfo info = new LPCDInfo(msg);
-        LPCDInfo last = getLastInfo();
+        LPCDInfo last = lastInfo;
         if (last == null) {
-            list.add(info);
+            lastInfo = info; // 第一个事件
         } else {
             if (info.timeInDistance(last, TIME_DISTANCE)) {
-                list.add(info);
-                checkReport1();
+                if (timeInlist.isEmpty()) {
+                    timeInlist.add(last);
+                }
+                timeInlist.add(info);
+                checkReport2(false); // 检查是否需要上报事件2
             } else {
-                report2();
-                checkReport1();
-                list.clear();
-                list.add(info);
+                if (timeOutlist.isEmpty()) {
+                    timeOutlist.add(last);
+                }
+                timeOutlist.add(info);
+                checkReport1(false); // 检查是否需要上报事件1
             }
         }
         handler.postDelayed(checkRunnable, CHECK_DELAY_TIME);
+        lastInfo = info; // 第一个事件
     }
 
-    private void checkReport1() {
-        if (list.size() == REPORT_COUNT) { // 条件 1
+    private void checkReport1(boolean reportCount) {
+        if (timeInlist.size() >= REPORT_COUNT) { // 条件 1
+            // 当定时任务到了，判断一下有没有触发2种情况的上报，如果触发了，那就不管了
+            timeInlist_size = timeInlist.size() - 1;
             report1();
-            list.clear();
+            timeInlist.clear();
+        } else {
+            // 当定时任务到了，如果没有触发2种情况的上报，那就上报之前统计的次数
+            if (reportCount && timeInlist.size() > 0) {
+                report1Count(timeInlist.size());
+                timeInlist.clear();
+            }
+        }
+    }
+
+
+    private void checkReport2(boolean reportCount) {
+        if (timeOutlist.size() >= REPORT_COUNT) { // 条件 1
+            timeOutlist_size = timeOutlist.size() - 2;
+            report2();
+            timeOutlist.clear();
+        } else {
+            if (reportCount && timeOutlist.size() > 0) {
+                report2Count(timeInlist.size());
+                timeOutlist.clear();
+            }
         }
     }
 
     private void report1() {
         //
+        Log.e(TAG," ------ 上报 report1 " + " report1_size " + report1_size +
+                " timeInlist_size " + timeInlist_size + " 相减后次数 " + (timeInlist_size - timeOutlist_size));
+
+
+    }
+
+    private void report1Count(int size) {
+        //
+        report1_size = size;
+        Log.e(TAG," ------ 上报 report1 " +  size);
     }
 
     private void report2() {
         //
+        Log.e(TAG," ------ 上报 report2 " + " report2_size " + report2_size +
+                " timeOutlist_size " + timeOutlist_size + " 相减后次数 " + (timeOutlist_size - timeInlist_size));
+    }
+
+    private void report2Count(int size) {
+        //
+        report2_size = size;
+        Log.e(TAG," ------ 上报 report2 " + size);
     }
 
 
@@ -91,7 +132,9 @@ public class LPCD {
             if (info == null) {
                 return false;
             }
+            Log.e(TAG," ------ 时间差 " + (this.time - info.time));
             return Math.abs(this.time - info.time) < distance;
         }
     }
+
 }
